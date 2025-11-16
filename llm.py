@@ -36,6 +36,7 @@ class FeatureConfig:
     player_name_column: str = "name"
     gameweek_column: str = "gw"
     season_column: str = "season"
+    position_column: str = "position" #ADDED TO GET MAE FOR EACH POSITION
     # optional manual feature subset – leave [] to use all numeric features
     selected_feature_columns: List[str] = field(default_factory=list)
 
@@ -207,7 +208,7 @@ def predict_points_with_llm(
     if len(X_test) <= max_rows:
         subset_indices = X_test.index
     else:
-        subset_indices = X_test.sample(n=max_rows, random_state=42).index
+        subset_indices = X_test.sample(n=25, random_state=42).index
 
     X_sub = X_test.loc[subset_indices]
     y_sub = y_test.loc[subset_indices]
@@ -273,11 +274,29 @@ def predict_points_with_llm(
                       feature_config.target_points_column]].copy()
     preview["llm_pred_total_points"] = preds
 
+    # -------------------------------------------
+    # NEW: Compute MAE per position
+    # -------------------------------------------
+    df_eval = df_sub.copy()
+    df_eval["llm_pred"] = preds
+
+    pos_col = feature_config.position_column
+    mae_by_position = {}
+
+    if pos_col in df_eval.columns:
+        for pos, group in df_eval.groupby(pos_col):
+            mae_by_position[pos] = mean_absolute_error(group[feature_config.target_points_column],
+                                                       group["llm_pred"])
+    else:
+        mae_by_position["NO_POSITION_COLUMN"] = None
+
+
     return {
         "test_mae": mae,
         "test_rmse": rmse,
+        "mae_by_position": mae_by_position,   # <-- ADD THIS
         "preview": preview.head(10),
-        "rationales": rationales[:5],  # first few rationales (qualitative)
+        "rationales": rationales[:5],
         "n_rows_scored": len(y_sub),
     }
 
@@ -338,6 +357,12 @@ def main():
     print(f"Rows scored by LLM: {results['n_rows_scored']}")
     print(f"LLM Test MAE (points):  {results['test_mae']:.3f}")
     print(f"LLM Test RMSE (points): {results['test_rmse']:.3f}")
+    print("\nMAE by position:")
+    for pos, m in results["mae_by_position"].items():
+        if m is None:
+            print(f"  {pos}: N/A")
+        else:
+            print(f"  {pos}: {m:.3f}")
 
     print("\nPreview of scored rows (test season):")
     print(results["preview"].to_string(index=False))
